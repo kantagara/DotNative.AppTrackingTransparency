@@ -1,0 +1,6 @@
+<Project>
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'ios-arm64' or '$(RuntimeIdentifier)' == 'iossimulator-arm64'">
+    <DotNativeNativeSource Include="$(MSBuildThisFileDirectory)../Platform/iOS/*.swift" />
+    <DotNativePluginEntry Include="TrackingTransparencyPlugin" />
+  </ItemGroup>
+</Project>
