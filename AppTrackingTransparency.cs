@@ -5,6 +5,10 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace DotNative.AppTrackingTransparency;
 
+// ─────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────
+
 public enum TrackingStatus
 {
     NotDetermined,
@@ -16,70 +20,83 @@ public enum TrackingStatus
 
 public interface IAppTrackingTransparency
 {
-    Task<TrackingStatus> StatusAsync(CancellationToken cancellationToken = default);
+    Task<TrackingStatus> StatusAsync(
+        CancellationToken cancellationToken = default);
 
-    Task<TrackingStatus> RequestAsync(CancellationToken cancellationToken = default);
+    Task<TrackingStatus> RequestAsync(
+        CancellationToken cancellationToken = default);
 
-    Task<string> AdvertisingIdentifierAsync(CancellationToken cancellationToken = default);
+    Task<string> AdvertisingIdentifierAsync(
+        CancellationToken cancellationToken = default);
 }
+
+// ─────────────────────────────────────────────────────────────
+// Dependency Injection
+// ─────────────────────────────────────────────────────────────
 
 public static class AppTrackingTransparencyServices
 {
-    public static IServiceCollection AddAppTrackingTransparency(this IServiceCollection services)
+    public static IServiceCollection AddAppTrackingTransparency(
+        this IServiceCollection services)
     {
-        services.TryAddSingleton<IAppTrackingTransparency, RoutingTrackingTransparency>();
+        services.TryAddSingleton<IAppTrackingTransparency, AppTrackingTransparencyService>();
         return services;
     }
 }
 
-internal sealed class RoutingTrackingTransparency(
+// ─────────────────────────────────────────────────────────────
+// Implementation
+// ─────────────────────────────────────────────────────────────
+
+internal sealed class AppTrackingTransparencyService(
     IPlatformChannels channels,
     PresentationTarget target
 ) : IAppTrackingTransparency
 {
-    public Task<TrackingStatus> StatusAsync(CancellationToken cancellationToken = default) =>
-        target.Platform == NativePlatform.IOS
-            ? new ChannelTrackingTransparency(channels).StatusAsync(cancellationToken)
-            : Task.FromResult(TrackingStatus.NotSupported);
+    private const string ChannelName = "dotnative.tracking-transparency";
+    private const string UnavailableIdentifier = "00000000-0000-0000-0000-000000000000";
 
-    public Task<TrackingStatus> RequestAsync(CancellationToken cancellationToken = default) =>
-        target.Platform == NativePlatform.IOS
-            ? new ChannelTrackingTransparency(channels).RequestAsync(cancellationToken)
-            : Task.FromResult(TrackingStatus.NotSupported);
+    private bool IsiOS => target.Platform == NativePlatform.IOS;
 
-    public Task<string> AdvertisingIdentifierAsync(CancellationToken cancellationToken = default) =>
-        target.Platform == NativePlatform.IOS
-            ? new ChannelTrackingTransparency(channels).AdvertisingIdentifierAsync(cancellationToken)
-            : Task.FromResult("00000000-0000-0000-0000-000000000000");
-}
-
-internal sealed class ChannelTrackingTransparency(IPlatformChannels channels)
-{
-    public async Task<TrackingStatus> StatusAsync(CancellationToken cancellationToken) =>
-        Parse(
-            await channels
-                .Get("dotnative.tracking-transparency")
-                .InvokeAsync("status", null, cancellationToken)
-                .ConfigureAwait(false)
-        );
-
-    public async Task<TrackingStatus> RequestAsync(CancellationToken cancellationToken) =>
-        Parse(
-            await channels
-                .Get("dotnative.tracking-transparency")
-                .InvokeAsync("request", null, cancellationToken)
-                .ConfigureAwait(false)
-        );
-
-    public async Task<string> AdvertisingIdentifierAsync(CancellationToken cancellationToken)
+    private Task<object?> InvokeAsync(
+        string method,
+        CancellationToken cancellationToken)
     {
-        var value = await channels
-            .Get("dotnative.tracking-transparency")
-            .InvokeAsync("advertisingIdentifier", null, cancellationToken)
+        return channels.Get(ChannelName)
+            .InvokeAsync(method, null, cancellationToken);
+    }
+
+    public async Task<TrackingStatus> StatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsiOS)
+            return TrackingStatus.NotSupported;
+
+        return Parse(await InvokeAsync("status", cancellationToken).ConfigureAwait(false));
+    }
+
+    public async Task<TrackingStatus> RequestAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsiOS)
+            return TrackingStatus.NotSupported;
+
+        return Parse(await InvokeAsync("request", cancellationToken).ConfigureAwait(false));
+    }
+
+    public async Task<string> AdvertisingIdentifierAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsiOS)
+            return UnavailableIdentifier;
+
+        var value = await InvokeAsync("advertisingIdentifier", cancellationToken)
             .ConfigureAwait(false);
-        if (value is not string identifier || identifier.Length is 0 or > 64)
-            throw new InvalidDataException("Invalid advertising identifier.");
-        return identifier;
+
+        return value is string identifier &&
+               identifier.Length is > 0 and <= 64
+            ? identifier
+            : throw new InvalidDataException("Invalid advertising identifier.");
     }
 
     private static TrackingStatus Parse(object? value) =>
